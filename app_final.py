@@ -1,15 +1,102 @@
+
+import os
+import logging
+
 from fastapi import FastAPI
+from dotenv import load_dotenv
 
-APP_VERSION={
-  "version": "0.1.0"
-}
+load_dotenv()
 
-app = FastAPI()
+
+# Настройка логирования
+raw_log_level = os.getenv("LOG_LEVEL")
+
+ALLOWED_LEVELS = {"DEBUG", "INFO", "WARNING"}
+invalid_level_warn = None
+
+if raw_log_level is None:
+    log_level = "INFO"
+else:
+    normalized_level = raw_log_level.strip().upper()
+
+    if normalized_level in ALLOWED_LEVELS:
+        log_level = normalized_level
+    else:
+        log_level = "INFO"
+        invalid_level_warn = (
+            f"Некорректный LOG_LEVEL={raw_log_level!r}. "
+            "Используется уровень INFO."
+        )
+
+logger = logging.getLogger("job_status_tracker")
+logger.setLevel(log_level)
+
+if not logger.handlers:
+    console_handler = logging.StreamHandler()
+
+    log_formatter = logging.Formatter(
+        "%(asctime)s - [%(levelname)s] - %(name)s - %(message)s"
+    )
+
+    console_handler.setFormatter(log_formatter)
+    logger.addHandler(console_handler)
+
+logger.propagate = False
+
+if invalid_level_warn:
+    logger.warning(invalid_level_warn)
+
+logger.info("Логгер настроен. Уровень: %s", log_level)
+logger.debug("Проверочное DEBUG-сообщение")
+
+
+# Настройка максимального количества jobs
+raw_max_jobs_value = os.getenv('MAX_JOBS')
+invalid_max_jobs_warn = None
+
+if raw_max_jobs_value is None:
+    max_jobs_value = 100
+else:
+    try:
+        max_jobs_value = int(raw_max_jobs_value)
+    except ValueError:
+        max_jobs_value = 100
+        invalid_max_jobs_warn = (
+            f"Некорректное значене MAX_JOBS: {raw_max_jobs_value!r}."
+            f"Используем значение: MAX_JOBS={max_jobs_value!r}"
+            )
+
+if max_jobs_value <= 0:
+    max_jobs_value = 100
+    invalid_max_jobs_warn = (
+        f"Значение MAX_JOBS меньше или равно 0."
+        f"Используем значение: MAX_JOBS={max_jobs_value!r}"
+        )
+
+if invalid_max_jobs_warn:
+    logger.warning(invalid_max_jobs_warn)
+
+# Инициализация FastAPI
+APP_VERSION = "0.1.0"
+
+app_title = (
+    (os.getenv("APP_NAME") or "").strip()
+    or "Job Status Tracker"
+)
+
+app = FastAPI(
+    title=app_title,
+    version=APP_VERSION
+)
+
 
 @app.get("/health")
 def health():
+    logger.debug("Вызван эндпоинт /health")
     return {"status": "ok"}
+
 
 @app.get("/version")
 def version():
-    return APP_VERSION
+    logger.debug("Вызван эндпоинт /version")
+    return {"version": APP_VERSION}
