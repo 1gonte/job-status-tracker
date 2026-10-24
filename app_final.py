@@ -2,7 +2,7 @@
 import os
 import logging
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Path
 from dotenv import load_dotenv
 from enum import Enum
 from pydantic import BaseModel, field_validator
@@ -52,7 +52,7 @@ if invalid_level_warn:
 logger.info("Логгер настроен. Уровень: %s", log_level)
 
 # Настройка максимального количества Jobs
-raw_max_jobs_value = os.getenv('MAX_JOBS')
+raw_max_jobs_value = os.getenv("MAX_JOBS")
 invalid_max_jobs_warn = None
 
 if raw_max_jobs_value is None:
@@ -79,21 +79,23 @@ if invalid_max_jobs_warn:
 
 # Реализация модели Job
 class JobStatus(str, Enum):
-    PENDING = 'pending'
-    RUNNING = 'running'
-    COMPLETED = 'completed'
-    FAILED = 'failed'
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
 
 class JobCategory(str, Enum):
-    DATA_PROCESSING = 'data_processing'
-    ML_INFERENCE = 'ml_inference'
-    REPORT_GENERATION = 'report_generation'
-    OTHER = 'other'
+    DATA_PROCESSING = "data_processing"
+    ML_INFERENCE = "ml_inference"
+    REPORT_GENERATION = "report_generation"
+    OTHER = "other"
 
-class JobCreate(BaseModel, extra='forbid'):
+
+class JobCreate(BaseModel, extra="forbid"):
     name: str
     author: str
-    description: str = ''
+    description: str = ""
     category: JobCategory = JobCategory.OTHER
 
     @field_validator("name", "author")
@@ -106,10 +108,16 @@ class JobCreate(BaseModel, extra='forbid'):
 
         return value
 
+
 class Job(JobCreate):
     id: int
     status: JobStatus
     created_at: datetime
+
+
+class JobListResponse(BaseModel):
+    jobs: list[Job]
+    total: int
 
 # Инициализация хранилища Jobs
 jobs: dict[int, Job] = {}
@@ -140,15 +148,16 @@ def version():
     logger.debug("Вызван эндпоинт /version")
     return {"version": APP_VERSION}
 
+
 @app.post("/jobs", response_model=Job, status_code=201)
 def create_job(job: JobCreate):
     global next_job_id
 
     if len(jobs) >= max_jobs_value:
-        logger.warning(f'Невозможно добавить Job. Достигнут лимит: {max_jobs_value}')
+        logger.warning(f"Невозможно добавить Job. Достигнут лимит: {max_jobs_value}")
         raise HTTPException(
             status_code=409,
-            detail=f'Невозможно добавить Job. Достигнут лимит: {max_jobs_value}'
+            detail=f"Невозможно добавить Job. Достигнут лимит: {max_jobs_value}"
         )
 
     new_job = Job(
@@ -164,6 +173,32 @@ def create_job(job: JobCreate):
     jobs[new_job.id] = new_job
     next_job_id += 1
 
-    logger.info(f'Создан Job: id={new_job.id}, category={new_job.category.value}')
+    logger.info(f"Создан Job: id={new_job.id}, category={new_job.category.value}")
 
     return new_job
+
+
+@app.get("/jobs", response_model=JobListResponse)
+def get_jobs(status: JobStatus | None = None):
+    jobs_list = list(jobs.values())
+
+    if status is not None:
+        jobs_list = [job for job in jobs_list if job.status == status]
+
+    return {
+                "jobs": jobs_list,
+                "total": len(jobs_list)
+            }
+
+
+@app.get("/jobs/{job_id}", response_model=Job)
+def get_job(job_id: int = Path(gt=0)):
+    job = jobs.get(job_id)
+
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Job с id: {job_id} не существует!"
+        )
+
+    return job
