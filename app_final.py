@@ -91,6 +91,12 @@ class JobCategory(str, Enum):
     REPORT_GENERATION = "report_generation"
     OTHER = "other"
 
+ALLOWED_TRANSITIONS = {
+    JobStatus.PENDING: {JobStatus.RUNNING},
+    JobStatus.RUNNING: {JobStatus.COMPLETED, JobStatus.FAILED},
+    JobStatus.COMPLETED: set(),
+    JobStatus.FAILED: set()
+}
 
 class JobCreate(BaseModel, extra="forbid"):
     name: str
@@ -118,6 +124,15 @@ class Job(JobCreate):
 class JobListResponse(BaseModel):
     jobs: list[Job]
     total: int
+
+class JobStatusUpdate(BaseModel, extra="forbid"):
+    status: JobStatus
+
+class JobStatsResponse(BaseModel, extra="forbid"):
+    total_jobs: int
+    by_status: dict[str, int]
+    by_category: dict[str, int]
+    by_author: dict[str, int]
 
 # Инициализация хранилища Jobs
 jobs: dict[int, Job] = {}
@@ -202,3 +217,61 @@ def get_job(job_id: int = Path(gt=0)):
         )
 
     return job
+
+@app.patch("/jobs/{job_id}/status", response_model=Job)
+def update_job_status(update: JobStatusUpdate, job_id: int = Path(gt=0)):
+    job_to_change = jobs.get(job_id)
+
+    if job_to_change is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Job с id: {job_id} не существует!"
+        )
+
+    if job_to_change.status == update.status:
+        logger.debug(
+            f"Смена статуса для Job {job_to_change.id} не выполнена. "
+            f"Job уже имеет статус: {update.status.value}"
+        )
+        return job_to_change
+
+    allowed = ALLOWED_TRANSITIONS[job_to_change.status]
+
+    if update.status not in allowed:
+        logger.warning(
+            f"Смена статуса для Job ID: {job_id} отклонена! "
+            f"Переход из {job_to_change.status.value} в {update.status.value} невозможен."
+            )
+        raise HTTPException(
+            status_code=409,
+            detail=f"Смена статуса для Job ID: {job_id} отклонена! "
+                    f"Переход из {job_to_change.status.value} в {update.status.value} невозможен."
+        )
+
+    old_status = job_to_change.status.value
+    job_to_change.status = update.status
+    logger.info(
+        f"Статус Job ID {job_id} успешно изменен! "
+        f"Прежний статус: {old_status}. Новый статус: {update.status.value}"
+    )
+    return job_to_change
+
+
+@app.get("/stats", response_model=JobStatsResponse)
+def get_stats():
+    total_jobs = len(jobs)
+    by_status = {status.value: 0 for status in JobStatus}
+    by_category = {category.value: 0 for category in JobCategory}
+    by_author = dict()
+
+    for job in jobs.values():
+        by_status[job.status.value] += 1
+        by_category[job.category.value] += 1
+        by_author[job.author] = by_author.get(job.author, 0) + 1
+
+    return {
+        "total_jobs": total_jobs,
+        "by_status": by_status,
+        "by_category": by_category,
+        "by_author": by_author
+    }
